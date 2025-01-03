@@ -71,12 +71,30 @@ void* allocate_memory_for_int(int data) {
             
             return usable_memory;
         }
-        curr->next;
+        curr = curr->next;
     }
 
     std::cout << "No memory available" << std::endl;
 
     return nullptr;
+}
+
+void deallocate_memory_for_int(void* int_ptr) {
+    auto* curr = reinterpret_cast<BlockHeader*>(reinterpret_cast<char*>(int_ptr) - sizeof(BlockHeader));
+
+    if (curr->is_free == true) {
+        std::cout << "Memory is already free" << std::endl;
+        return;
+    }
+
+    curr->is_free = true;
+
+    std::cout << "Block at " << curr << " deallocated" << std::endl;
+
+    if (curr->next->is_free && curr->next) {
+        curr->size += curr->next->size + sizeof(BlockHeader);
+        curr->next = curr->next->next;
+    }
 }
 
 int main()
@@ -87,10 +105,15 @@ int main()
     int* number = (int*)allocate_memory_for_int(3);
 
     print_memory_pool();
+    
+    int* number2 = (int*)allocate_memory_for_int(5);
+    print_memory_pool();
 
+    int* number3 = (int*)allocate_memory_for_int(7);
 
-    for (int i = 0; i < 50; i++) {
-        std::cout << memory_pool[i] << std::endl;
-    }
-    std::cout << *number << std::endl;
+    deallocate_memory_for_int(number2);
+    deallocate_memory_for_int(number);
+    print_memory_pool();
+
+    return 0;
 }
