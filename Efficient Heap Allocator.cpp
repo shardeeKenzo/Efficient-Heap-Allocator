@@ -7,7 +7,7 @@ constexpr std::size_t POOL_SIZE = 1024 * 1024 * 10; // 10 mb fixed-size
 char memory_pool[POOL_SIZE]; // 10 mb memory pool
 
 struct BlockHeader {
-    std::size_t size;
+    std::size_t size;   
     bool is_free;
     BlockHeader* next;
 };
@@ -26,27 +26,43 @@ void init_memory_pool() {
 //print data(blocks and info about them)
 void print_memory_pool() {
     auto* curr = reinterpret_cast<BlockHeader*>(memory_pool);
-    
-    std::cout << "Memory pool blocks:\n";
+    std::size_t block_index = 0;
 
+    std::cout << "\n--- Memory Pool Blocks ---\n";
     while (curr) {
-        std::cout << "Block at " << curr
-            << " | Size: " << curr->size
-            << " | Free?: " << curr->is_free << std::endl;
+        // calculate offset within memory_pool
+        std::size_t offset = reinterpret_cast<char*>(curr) - memory_pool;
+
+        // calculate end address offset
+        std::size_t end_offset = offset + sizeof(BlockHeader) + curr->size;
+
+        std::cout
+            << "Block #" << block_index << ": [Header at offset " << offset
+            << "] | Size: " << curr->size
+            << " | is_free: " << std::boolalpha << curr->is_free
+            << " | next: " << curr->next
+            << " | End offset: " << end_offset
+            << "\n";
+
         curr = curr->next;
+        ++block_index;
     }
+    std::cout << "--------------------------\n\n";
 }
 
 
 //allocation for integer object(make template function to allocate any type)
 template <typename T>
-void* allocate_memory(T data) {
+T* allocate_memory(const T& data) {
     auto* curr = reinterpret_cast<BlockHeader*>(memory_pool);
 
     //while curr is not nullptr
     while (curr) {
         //checks if current block is free + if it has enough space for allocation
         if (curr->is_free && curr->size >= sizeof(T)) {
+            std::cout << "Found a free block at "
+                << curr << " with size " << curr->size
+                << " for an allocation of size " << sizeof(T) << "\n";
             
             //change state to not free
             curr->is_free = false;
@@ -60,18 +76,25 @@ void* allocate_memory(T data) {
             std::size_t remaining_size = curr->size - sizeof(T) - sizeof(BlockHeader);
 
             //create new block if we have enough space so we can continue to use it
-            if (remaining_size > 0) {
+            if (remaining_size > sizeof(BlockHeader)) {
                 auto* new_block = reinterpret_cast<BlockHeader*>(reinterpret_cast<char*>(usable_memory) + sizeof(T));
 
                 new_block->size = remaining_size;
                 new_block->is_free = true;
                 new_block->next = nullptr;
-                
+
                 curr->next = new_block;
                 curr->size = sizeof(T);
+
+                std::cout << "Splitting block. New block created at "
+                    << new_block << " with size " << new_block->size << "\n";
+            } else {
+                // if not enough space to create a new block header, just don't split
+                std::cout << "Not enough space to split block.\n";
             }
             
-            return usable_memory;
+            std::cout << "Returning usable memory at " << usable_memory << "\n";
+            return reinterpret_cast<T*>(usable_memory);
         }
         curr = curr->next;
     }
@@ -81,19 +104,28 @@ void* allocate_memory(T data) {
     return nullptr;
 }
 
-void deallocate_memory(void* ptr) {
+template <typename T>
+void deallocate_memory(T* ptr) {
+    if (!ptr) {
+        std::cout << "Attempted to deallocate a null pointer.\n";
+        return;
+    }
+
     auto* curr = reinterpret_cast<BlockHeader*>(reinterpret_cast<char*>(ptr) - sizeof(BlockHeader));
 
-    if (curr->is_free == true) {
-        std::cout << "Memory is already free" << std::endl;
+    if (curr->is_free) {
+        std::cout << "Block at " << curr << " is already free.\n";
         return;
     }
 
     curr->is_free = true;
+    std::cout << "Deallocated block at " << curr
+        << " (size " << curr->size << ") and marked it as free.\n";
 
-    std::cout << "Block at " << curr << " deallocated" << std::endl;
+    if (curr->next && curr->next->is_free) {
+        std::cout << "Coalescing block at " << curr
+            << " with next free block at " << curr->next << "\n";
 
-    if (curr->next->is_free && curr->next) {
         curr->size += curr->next->size + sizeof(BlockHeader);
         curr->next = curr->next->next;
     }
@@ -104,24 +136,38 @@ int main()
     init_memory_pool();
     print_memory_pool();
 
-    char* number = (char*)allocate_memory('d');
+    char letter = 'b';
+    int number = 10;
+    double decimal_number = 5.6;
+    bool state = false;
 
+    char* letter_ptr = allocate_memory(letter);
     print_memory_pool();
+    int* number_ptr = allocate_memory(number);
+    print_memory_pool();
+    double* decimal_ptr = allocate_memory(decimal_number);
+    print_memory_pool();
+    bool* state_ptr = allocate_memory(state);
+    print_memory_pool();
+    int number2 = 999;
+    int* number2_ptr;
     
-    int* number2 = (int*)allocate_memory(5);
+    *state_ptr = true;
+    
+    if (*state_ptr == true) {
+        number2_ptr = allocate_memory(number2);
+    }
+    else { number2_ptr = allocate_memory(200); }
     print_memory_pool();
 
-    double* number3 = (double*)allocate_memory(7.23);
-
-    std::string* string = (std::string*)allocate_memory("Cat");
-
+    deallocate_memory(decimal_ptr);
+    deallocate_memory(letter_ptr);
     print_memory_pool();
-
-
-    deallocate_memory(number2);
-    deallocate_memory(number);
-
-
+    deallocate_memory(number_ptr);
+    print_memory_pool();
+    deallocate_memory(state_ptr);
+    print_memory_pool();
+    deallocate_memory(number2_ptr);
     print_memory_pool();
 
     return 0;
