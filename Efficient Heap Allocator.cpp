@@ -2,7 +2,7 @@
 #include <cstddef>
 #include <string>
 
-constexpr std::size_t MAX_BUCKETS = 7; // up to 1024 bytes (should be 9)
+constexpr std::size_t MAX_BUCKETS = 4; // up to 1024 bytes (should be 9)
 constexpr std::size_t POOL_SIZE = 1024 * 1024 * 10; // 10 mb fixed-size
 
 char memory_pool[POOL_SIZE]; // 10 mb memory pool
@@ -97,7 +97,7 @@ void init_memory_pool_recursively(
 
 void initialize_memory_pool() {
     std::size_t initial_size = sizeof(int);     
-    std::size_t initial_total_blocks = 2;   
+    std::size_t initial_total_blocks = 4;   
     std::size_t current_level = 0;
     std::size_t max_levels = MAX_BUCKETS;      
     char* starting_memory_pool = memory_pool;  
@@ -324,45 +324,27 @@ int main()
     bool* state_ptr = alloc(state);
     print_memory_pool();
 
-    /*init_memory_pool();
-    print_memory_pool();
-
-    char letter = 'b';
-    int number = 10;
-    double decimal_number = 5.6;
-    bool state = false;
-
-    char* letter_ptr = allocate_memory(letter);
-    print_memory_pool();
-    int* number_ptr = allocate_memory(number);
-    print_memory_pool();
-    double* decimal_ptr = allocate_memory(decimal_number);
-    print_memory_pool();
-    bool* state_ptr = allocate_memory(state);
-    print_memory_pool();
     int number2 = 999;
     int* number2_ptr;
-    
+
     *state_ptr = true;
-    
+
     if (*state_ptr == true) {
-        number2_ptr = allocate_memory(number2);
+        number2_ptr = alloc(number2);
     }
-    else { number2_ptr = allocate_memory(200); }
+    else { number2_ptr = alloc(200); }
     print_memory_pool();
 
-    deallocate_memory(decimal_ptr);
-    deallocate_memory(letter_ptr);
+    dealloc_(decimal_ptr);
+    dealloc_(letter_ptr);
     print_memory_pool();
-    deallocate_memory(number_ptr);
+    dealloc_(number_ptr);
     print_memory_pool();
-    deallocate_memory(state_ptr);
+    dealloc_(state_ptr);
     print_memory_pool();
-    deallocate_memory(number2_ptr);
+    dealloc_(number2_ptr);
     print_memory_pool();
-    */
 
-
-
+    std::cout << *number2_ptr << std::endl;
     return 0;
 }
