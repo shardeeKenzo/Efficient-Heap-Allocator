@@ -2,15 +2,19 @@
 #include <cstddef>
 #include <string>
 
-constexpr std::size_t MAX_BUCKETS = 9; // up to 1024 bytes
+constexpr std::size_t MAX_BUCKETS = 7; // up to 1024 bytes (should be 9)
 constexpr std::size_t POOL_SIZE = 1024 * 1024 * 10; // 10 mb fixed-size
 
 char memory_pool[POOL_SIZE]; // 10 mb memory pool
+
+//forward decls
+struct Bucket;
 
 struct BlockHeader {
     std::size_t size;   
     bool is_free;
     BlockHeader* next;
+    Bucket* bucket_ptr;
 };
 
 struct Bucket {
@@ -61,6 +65,7 @@ void init_memory_pool_recursively(
 
     curr_block = init_block;
     for (std::size_t i = 0; i < init_bucket->total_blocks; ++i) {
+        curr_block->bucket_ptr = init_bucket;
         curr_block->size = init_bucket->block_size;
         curr_block->is_free = true;
         if (curr_block->next != nullptr) {
@@ -160,6 +165,44 @@ void print_memory_pool() {
     std::cout << "===========================\n\n";
 }
 
+template <typename T>
+T* alloc(const T& data) {
+    auto* curr_bucket = reinterpret_cast<Bucket*>(memory_pool);
+
+    while (curr_bucket != nullptr) {
+        if (curr_bucket->block_size >= sizeof(T) && curr_bucket->free_blocks > 0) {
+            BlockHeader* curr_block = curr_bucket->head;
+
+            while (curr_block != nullptr) {
+                if (curr_block->is_free) {
+                    std::cout << "Found a free block at " << curr_block
+                        << " with size " << curr_block->size
+                        << " for an allocation of size " << sizeof(T) << std::endl;
+
+                    curr_block->is_free = false;
+                    curr_block->bucket_ptr->free_blocks -= 1;
+
+                    void* usable_memory = reinterpret_cast<void*>(curr_block + 1);
+
+                    new (usable_memory) T(data);
+
+                    if (sizeof(T) < curr_block->size) {
+                        std::cout << "Internal fragmentation = "
+                            << (curr_block->size - sizeof(T)) << " bytes" << std::endl;
+                    }
+
+                    return reinterpret_cast<T*>(usable_memory);
+                }
+                curr_block = curr_block->next;
+            }
+        }
+        curr_bucket = curr_bucket->next;
+    }
+
+    std::cout << "No suitable block found for the requested type." << std::endl;
+    return nullptr;
+}
+
 
 //allocation for integer object(make template function to allocate any type)
 template <typename T>
@@ -215,6 +258,27 @@ T* allocate_memory(const T& data) {
 }
 
 template <typename T>
+void dealloc_(T* ptr) {
+    if (!ptr) {
+        std::cout << "Attempted to deallocate a null pointer.\n";
+        return;
+    }
+
+    auto* curr = reinterpret_cast<BlockHeader*>(reinterpret_cast<char*>(ptr) - sizeof(BlockHeader));
+
+    if (curr->is_free) {
+        std::cout << "Block at " << curr << " is already free.\n";
+        return;
+    }
+
+    curr->is_free = true;
+    curr->bucket_ptr->free_blocks += 1;
+
+    std::cout << "Deallocated block at " << curr
+        << " (size " << curr->size << ") and marked it as free.\n";
+}
+
+template <typename T>
 void deallocate_memory(T* ptr) {
     if (!ptr) {
         std::cout << "Attempted to deallocate a null pointer.\n";
@@ -245,6 +309,21 @@ int main()
 {   
     initialize_memory_pool();
     print_memory_pool();
+
+    char letter = 'b';
+    int number = 10;
+    double decimal_number = 5.6;
+    bool state = false;
+
+    char* letter_ptr = alloc(letter);
+    print_memory_pool();
+    int* number_ptr = alloc(number);
+    print_memory_pool();
+    double* decimal_ptr = alloc(decimal_number);
+    print_memory_pool();
+    bool* state_ptr = alloc(state);
+    print_memory_pool();
+
     /*init_memory_pool();
     print_memory_pool();
 
