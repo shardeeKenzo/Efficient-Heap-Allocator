@@ -101,6 +101,37 @@ private:
         current_bucket_ptr = init_bucket;
     }
 
+    void fillFreeMemory(char* start_memory_pool, std::size_t max_level, std::size_t initial_total_blocks, std::size_t initial_size) {
+        std::vector<int> number_of_blocks_in_each_bucket;
+
+        auto* init_bucket = reinterpret_cast<Bucket*>(start_memory_pool);
+        while (init_bucket->next != nullptr) {
+            init_bucket = init_bucket->next;
+            number_of_blocks_in_each_bucket.push_back(init_bucket->total_blocks);
+        }
+
+        auto* init_block = reinterpret_cast<BlockHeader*>(init_bucket + sizeof(Bucket));
+        while (init_block->next != nullptr) {
+            init_block = init_block->next;
+        }
+
+        std::size_t used_space = 0;
+
+        for (int i = 0; i < number_of_blocks_in_each_bucket.size(); ++i) {
+            used_space = number_of_blocks_in_each_bucket[i] * initial_size;
+            initial_size *= 2;
+        }
+
+        auto* free_memory = reinterpret_cast<BlockHeader*>(init_block + sizeof(BlockHeader) + init_bucket->block_size);
+
+        free_memory->size = POOL_SIZE - sizeof(BlockHeader) - used_space;
+        free_memory->is_free = true;
+        free_memory->next = nullptr;
+        free_memory->bucket_ptr = nullptr;
+
+        std::cout << free_memory->size << " bytes\n" << used_space << "\n" << used_space + free_memory->size << std::endl;
+    }
+
     std::size_t calculate_offset(void* ptr) {
         return reinterpret_cast<char*>(ptr) - memory_pool;
     }
@@ -131,6 +162,8 @@ public:
             head_bucket,
             memory_pool
         );
+
+        fillFreeMemory(memory_pool, max_levels, initial_total_blocks, initial_size);
     }
 
     void print_memory_pool() {
