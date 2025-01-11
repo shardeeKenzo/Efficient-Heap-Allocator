@@ -7,7 +7,7 @@
 #include <vector>
 
 constexpr std::size_t MAX_BUCKETS = 9; // up to 1024 bytes (should be 9)
-constexpr std::size_t POOL_SIZE = 1024 * 1024 * 4; // 4 mb fixed-size
+constexpr std::size_t POOL_SIZE = 1024 * 1024 * 10; // 10 mb fixed-size
 
 char memory_pool[POOL_SIZE]; // 4 mb memory pool
 
@@ -31,6 +31,8 @@ private:
         BlockHeader* head;
         Bucket* next;
     };
+
+    BlockHeader* fallback_area = nullptr;
 
     //initialize memory pool using segregated lists with recursion
     void init_memory_pool_recursively(
@@ -102,34 +104,53 @@ private:
     }
 
     void fillFreeMemory(char* start_memory_pool, std::size_t max_level, std::size_t initial_total_blocks, std::size_t initial_size) {
-        std::vector<int> number_of_blocks_in_each_bucket;
+        std::vector<std::size_t> number_of_blocks_in_each_bucket;
 
         auto* init_bucket = reinterpret_cast<Bucket*>(start_memory_pool);
-        while (init_bucket->next != nullptr) {
-            init_bucket = init_bucket->next;
+
+        Bucket* last_bucket = nullptr;
+
+        while (init_bucket) {
             number_of_blocks_in_each_bucket.push_back(init_bucket->total_blocks);
+            last_bucket = init_bucket;
+            init_bucket = init_bucket->next;
         }
 
-        auto* init_block = reinterpret_cast<BlockHeader*>(init_bucket + sizeof(Bucket));
+        if (last_bucket == nullptr) {
+            return;
+        }
+
+        char* tmp = reinterpret_cast<char*>(last_bucket) + sizeof(Bucket);
+        auto* init_block = reinterpret_cast<BlockHeader*>(tmp);
         while (init_block->next != nullptr) {
             init_block = init_block->next;
         }
 
-        std::size_t used_space = 0;
 
-        for (int i = 0; i < number_of_blocks_in_each_bucket.size(); ++i) {
-            used_space = number_of_blocks_in_each_bucket[i] * initial_size;
-            initial_size *= 2;
+
+        std::size_t used_space = 0;
+        
+        std::size_t current_block_size = initial_size;
+        for (std::size_t i = 0; i < number_of_blocks_in_each_bucket.size(); ++i) {
+            used_space += number_of_blocks_in_each_bucket[i] * current_block_size;
+            current_block_size *= 2;
         }
 
-        auto* free_memory = reinterpret_cast<BlockHeader*>(init_block + sizeof(BlockHeader) + init_bucket->block_size);
+        char* free_mem_ptr = reinterpret_cast<char*>(init_block) + sizeof(BlockHeader) + last_bucket->block_size;
+        BlockHeader* free_memory = reinterpret_cast<BlockHeader*>(free_mem_ptr);
 
-        free_memory->size = POOL_SIZE - sizeof(BlockHeader) - used_space;
+        free_memory->size = (start_memory_pool + POOL_SIZE) - free_mem_ptr;
         free_memory->is_free = true;
         free_memory->next = nullptr;
         free_memory->bucket_ptr = nullptr;
 
-        std::cout << free_memory->size << " bytes\n" << used_space << "\n" << used_space + free_memory->size << std::endl;
+        fallback_area = free_memory;
+
+        
+        //std::cout << "Fallback area initialized at offset "
+        //    << calculate_offset(free_memory)
+        //    << " with size " << free_memory->size << " bytes.\n";
+            
     }
 
     std::size_t calculate_offset(void* ptr) {
@@ -146,7 +167,7 @@ public:
 
     void initialize_memory_pool() {
         std::size_t initial_size = sizeof(long long);
-        std::size_t initial_total_blocks = 4;
+        std::size_t initial_total_blocks = 32;
         std::size_t current_level = 0;
         std::size_t max_levels = MAX_BUCKETS;
         char* starting_memory_pool = memory_pool;
@@ -220,9 +241,9 @@ public:
 
                 while (curr_block != nullptr) {
                     if (curr_block->is_free) {
-                        /*std::cout << "Found a free block at " << curr_block
-                            << " with size " << curr_block->size
-                            << " for an allocation of size " << sizeof(T) << std::endl;*/
+                        //std::cout << "Found a free block at " << curr_block
+                        //    << " with size " << curr_block->size
+                        //    << " for an allocation of size " << sizeof(T) << std::endl;
 
                         curr_block->is_free = false;
                         curr_block->bucket_ptr->free_blocks -= 1;
@@ -231,19 +252,60 @@ public:
 
                         new (usable_memory) T(data);
 
-                        /*if (sizeof(T) < curr_block->size) {
-                            std::cout << "Internal fragmentation = "
-                                << (curr_block->size - sizeof(T)) << " bytes" << std::endl;
-                        }*/
+                        if (sizeof(T) < curr_block->size) {
+                         //   std::cout << "Internal fragmentation = "
+                         //       << (curr_block->size - sizeof(T)) << " bytes" << std::endl;
+                        }
 
                         return reinterpret_cast<T*>(usable_memory);
                     }
                     curr_block = curr_block->next;
                 }
             }
+
             curr_bucket = curr_bucket->next;
         }
 
+        if (curr_bucket == nullptr) {
+
+            BlockHeader* curr_block = fallback_area;
+
+            while(curr_block){
+
+                if (curr_block->is_free && curr_block->size >= sizeof(T)) {
+
+                    curr_block->is_free = false;
+
+                    void* usable_space = reinterpret_cast<void*>(curr_block + 1);
+
+                    new (usable_space) T(data);
+
+                    std::size_t remaining_size = curr_block->size - sizeof(T) - sizeof(BlockHeader);
+
+                    //create new block if we have enough space so we can continue to use it
+                    if (remaining_size > sizeof(BlockHeader)) {
+                        auto* new_block = reinterpret_cast<BlockHeader*>(reinterpret_cast<char*>(usable_space) + sizeof(T));
+
+                        new_block->size = remaining_size;
+                        new_block->is_free = true;
+                        new_block->next = nullptr;
+
+                        curr_block->next = new_block;
+                        curr_block->size = sizeof(T);
+
+                        //std::cout << "Splitting block. New block created at "
+                        //    << new_block << " with size " << new_block->size << "\n";
+                    }
+                    else {
+                        // if not enough space to create a new block header, just don't split
+                       // std::cout << "Not enough space to split block.\n";
+                    }
+
+                    return reinterpret_cast<T*>(usable_space);
+                }
+                curr_block = curr_block->next;
+            }
+        }
         //std::cout << "No suitable block found for the requested type." << std::endl;
         return nullptr;
     }
@@ -263,10 +325,12 @@ public:
         }
 
         curr->is_free = true;
-        curr->bucket_ptr->free_blocks += 1;
+        if (curr->bucket_ptr != nullptr) {
+            curr->bucket_ptr->free_blocks += 1;
+        }
 
-        /*std::cout << "Deallocated block at " << curr
-            << " (size " << curr->size << ") and marked it as free.\n";*/
+       // std::cout << "Deallocated block at " << curr
+       //     << " (size " << curr->size << ") and marked it as free.\n";
     }
 };
 
@@ -391,7 +455,7 @@ int main()
     //MemoryPool m_p {};
     Benchmark b_m {};
 
-    const int num_iterations = 500;
+    const int num_iterations = 10000;
 
     // perform benchmark for custom allocator
     double custom_time = b_m.benchmark_custom_alloc<TestStruct>(num_iterations);
